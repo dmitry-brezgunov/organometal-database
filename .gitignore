@@ -167,3 +167,7 @@ cython_debug/
 
 # Mac
 *.DS_Store
+
+# Artifacts
+*.xlsx
+*.db
