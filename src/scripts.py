@@ -5,14 +5,13 @@ import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import Atom, Crippen, Descriptors, Lipinski
 from rdkit.Chem.rdchem import MolSanitizeException
-from sqlalchemy import create_engine, insert, or_, select, text, update
+from sqlalchemy import Engine, insert, or_, select, text, update
 
 from src.models import Base, Journal, Molecule, Paper
 from src.sanitization import sanitize
 
 
-def populate_table(df: pd.DataFrame, model: Base, clean_table: bool = False):
-    engine = create_engine("sqlite:///organometal.db")
+def populate_table(engine: Engine, df: pd.DataFrame, model: Base, clean_table: bool = False):
     data = df.to_dict(orient="records")
 
     with engine.connect() as connection:
@@ -38,9 +37,7 @@ def create_journals() -> pd.DataFrame:
     )
 
 
-def get_journal_id(journal_name: str) -> int:
-    engine = create_engine("sqlite:///organometal.db")
-
+def get_journal_id(journal_name: str, engine: Engine) -> int:
     with engine.connect() as conn:
         stmt = select(Journal.id).where(
             or_(
@@ -52,17 +49,20 @@ def get_journal_id(journal_name: str) -> int:
         )
         journal_id = conn.scalar(stmt)
 
+        if not journal_id:
+            print(f"{journal_name} not found")
+
     return journal_id
 
 
-def create_papers(df: pd.DataFrame) -> pd.DataFrame:
+def create_papers(engine: Engine, df: pd.DataFrame) -> pd.DataFrame:
     papers = pd.DataFrame(
         {
             "doi": df["DOI"].str.lower(),
             "title": df["Title"].replace(r"<.*?>", "", regex=True),
             "authors": df["Authors"],
             "abstract": df["Abstract"].str.strip(),
-            "journal": df["Journal"],
+            "journal": df["Journal"].replace(r"&amp;", "&", regex=True),
             "year": df["Year"].astype(int),
             "keywords": df["Keywords"],
             "pages": df["Pages"].replace("Pages Not Available", np.nan),
@@ -70,7 +70,7 @@ def create_papers(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     papers = papers.drop_duplicates(subset="doi")
-    papers["journal_id"] = papers["journal"].apply(get_journal_id).astype(int)
+    papers["journal_id"] = papers["journal"].apply(get_journal_id, engine=engine).astype(int)
     papers = papers.drop(columns=["journal"])
 
     return papers
@@ -93,18 +93,18 @@ def create_molecules(df: pd.DataFrame) -> pd.DataFrame:
     return molecules
 
 
-def get_paper_id(doi: str) -> int:
-    engine = create_engine("sqlite:///organometal.db")
-
+def get_paper_id(doi: str, engine: Engine) -> int:
     with engine.connect() as conn:
         stmt = select(Paper.id).where(Paper.doi == doi.lower())
         paper_id = conn.scalar(stmt)
 
+        if not paper_id:
+            print(f"Did't found paper with doi {doi}")
+
     return paper_id
 
 
-def get_molecule_id(row: pd.Series) -> int:
-    engine = create_engine("sqlite:///organometal.db")
+def get_molecule_id(row: pd.Series, engine: Engine) -> int:
     cleaned_smiles = re.sub(r"(?<=[A-Za-z])(-|\+)\d*(?!>)", "", row["SMILES"])
 
     with engine.connect() as conn:
@@ -116,23 +116,30 @@ def get_molecule_id(row: pd.Series) -> int:
         )
         molecule_id = conn.scalar(stmt)
 
+        if not molecule_id:
+            print(f"Molecule {row["SMILES"]} not found")
+
     return molecule_id
 
 
 def create_source(row: pd.Series) -> pd.Series:
-    if row["Homemade"] is not np.nan:
+    if pd.notna((row["Homemade"])):
         row["source"] = "homemade"
-    elif row["Commercial"] is not np.nan:
+    elif pd.notna(row["Commercial"]):
         row["source"] = "commercial"
         row["commercial_name"] = row["Commercial"]
-    elif row["Clinical"] is not np.nan:
+    elif pd.notna(row["Clinical"]):
         row["source"] = "clinical"
         row["clinical_name"] = row["Clinical"]
+    else:
+        row["source"] = pd.NA
+        row["commercial_name"] = pd.NA
+        row["clinical_name"] = pd.NA
     return row
 
 
 def freshly_prepared(value: str) -> bool:
-    if value is np.nan:
+    if pd.isna(value):
         return pd.NA
     if value.lower() in ("yes", "freshly prepared"):
         return True
@@ -149,7 +156,7 @@ def stability_proofs(value: str) -> bool:
         return False
 
 
-def create_experiments(df: pd.DataFrame) -> pd.DataFrame:
+def create_experiments(engine: Engine, df: pd.DataFrame) -> pd.DataFrame:
     experiments = df.drop(
         columns=[
             "ID",
@@ -165,9 +172,9 @@ def create_experiments(df: pd.DataFrame) -> pd.DataFrame:
             "SMILES (UPD)",
         ]
     )
-    experiments["paper_id"] = experiments["DOI"].apply(get_paper_id).astype(int)
+    experiments["paper_id"] = experiments["DOI"].apply(get_paper_id, engine=engine).astype(int)
     experiments = experiments.drop(columns=["DOI"])
-    experiments["molecule_id"] = experiments.apply(get_molecule_id, axis=1).astype(int)
+    experiments["molecule_id"] = experiments.apply(get_molecule_id, args=(engine,), axis=1).astype(int)
     experiments = experiments.drop(columns=["CAS number", "ImageID", "SMILES"])
     experiments = experiments.replace("no information", np.nan)
     experiments["freshly_prepared"] = experiments["Freshly prepared (yes/no)"].apply(
@@ -233,17 +240,17 @@ def create_experiments(df: pd.DataFrame) -> pd.DataFrame:
     return experiments
 
 
-def generate_ligands(smiles: str):
-    smiles_wo_isomers = [val for val in smiles.split(".") if "Pt" in val]
+def generate_ligands(smiles: str, metal_name: str, metal_num: int):
+    smiles_wo_isomers = [val for val in smiles.split(".") if metal_name in val]
     ligands_smiles = []
     for val in smiles_wo_isomers:
         try:
             mol = Chem.RWMol(sanitize(val))
-        except MolSanitizeException as e:
+        except Exception as e:
             ligands_smiles.append(str(e))
             continue
 
-        pts: list[Atom] = [atom for atom in mol.GetAtoms() if atom.GetAtomicNum() == 78]
+        pts: list[Atom] = [atom for atom in mol.GetAtoms() if atom.GetAtomicNum() == metal_num]
         num_of_pts = len(pts)
 
         for _ in range(num_of_pts):
@@ -255,7 +262,7 @@ def generate_ligands(smiles: str):
                 atom.SetBoolProp("metal_bonded", True)
 
             mol.RemoveAtom(pt.GetIdx())
-            pts = [atom for atom in mol.GetAtoms() if atom.GetAtomicNum() == 78]
+            pts = [atom for atom in mol.GetAtoms() if atom.GetAtomicNum() == metal_num]
 
         ligands = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
         for ligand in ligands:
@@ -267,11 +274,10 @@ def generate_ligands(smiles: str):
     return ligands_smiles
 
 
-def create_ligands():
-    engine = create_engine("sqlite:///organometal.db")
+def create_ligands(engine: Engine, metal_name: str, metal_num: int):
     df = pd.read_sql_table("molecules", engine)
     df = df[["id", "smiles"]]
-    df["ligands"] = df["smiles"].apply(generate_ligands)
+    df["ligands"] = df["smiles"].apply(generate_ligands, metal_name=metal_name, metal_num=metal_num)
     df = df.drop(columns=["smiles"])
     df = df.explode("ligands", ignore_index=True)
     df = df.dropna(subset=["ligands"])
@@ -285,7 +291,7 @@ def create_ligands():
 def calculate_mol_props(row: pd.Series) -> pd.Series:
     try:
         mol = sanitize(row["smiles"])
-    except Chem.rdchem.MolSanitizeException:
+    except Exception:
         return row
 
     row["clog_p"] = Crippen.MolLogP(mol)
@@ -300,8 +306,7 @@ def calculate_mol_props(row: pd.Series) -> pd.Series:
     return row
 
 
-def upload_mol_props():
-    engine = create_engine("sqlite:///organometal.db")
+def upload_mol_props(engine: Engine):
     df = pd.read_sql_table("molecules", engine)
     df = df.apply(calculate_mol_props, axis=1)
 

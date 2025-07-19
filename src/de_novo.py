@@ -4,7 +4,7 @@ from math import factorial
 
 import pandas as pd
 from rdkit import Chem, RDLogger
-from sqlalchemy import create_engine
+from sqlalchemy import Engine
 from tqdm import tqdm
 
 from src.sanitization import sanitize
@@ -13,8 +13,7 @@ warnings.filterwarnings("ignore")
 RDLogger.DisableLog("rdApp.*")
 
 
-def generate_de_novo_from_ligands(query: str):
-    engine = create_engine("sqlite:///organometal.db")
+def generate_de_novo_from_ligands(engine: Engine, query: str):
     df = pd.read_sql(query, engine)
     ligands = df["smiles_with_props"].to_list()
 
@@ -110,7 +109,7 @@ if __name__ == "__main__":
                 num_rotatable_bonds,
                 exact_mol_wt,
                 num_of_atoms
-            from cleaned_activity 
+            from cleaned_activity
             where
                 activity < 5
                 and num_h_donors <= 5

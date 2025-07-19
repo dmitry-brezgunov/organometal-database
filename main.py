@@ -1,6 +1,7 @@
 import logging
 
 import pandas as pd
+from sqlalchemy import create_engine
 
 from src.models import Experiment, Journal, Ligand, Molecule, Paper
 from src.scripts import (create_experiments, create_journals, create_ligands,
@@ -16,34 +17,35 @@ logger = logging.getLogger(__name__)
 if __name__ == "__main__":
     logger.info("Starting...")
     logger.info("Loading dataset")
-    df = pd.read_excel("./The_Database_03_12.xlsx")
+    df = pd.read_excel("./cuprum/full_db.xlsx")
+    engine = create_engine("sqlite:///cuprum.db")
 
     logger.info("Creating Journals")
     journals = create_journals()
     logger.info("Uploading Journals to DB")
-    populate_table(journals, Journal)
+    populate_table(engine, journals, Journal, clean_table=True)
 
     logger.info("Creating Papers")
-    papers = create_papers(df.copy())
+    papers = create_papers(engine, df.copy())
     logger.info("Uploading Papers to DB")
-    populate_table(papers, Paper)
+    populate_table(engine, papers, Paper, clean_table=True)
 
     logger.info("Creating Molecules")
     molecules = create_molecules(df.copy())
     logger.info("Uploading Molecules to DB")
-    populate_table(molecules, Molecule)
+    populate_table(engine, molecules, Molecule, clean_table=True)
 
     logger.info("Creating Experiments")
-    experiments = create_experiments(df.copy())
+    experiments = create_experiments(engine, df.copy())
     logger.info("Uploading Experiments to DB")
-    populate_table(experiments, Experiment)
+    populate_table(engine, experiments, Experiment, clean_table=True)
 
     logger.info("Creating Ligands")
-    ligands = create_ligands()
+    ligands = create_ligands(engine, metal_name="Cu", metal_num=29)
     logger.info("Uploading Ligands")
-    populate_table(ligands, Ligand)
+    populate_table(engine, ligands, Ligand, clean_table=True)
 
     logger.info("Calculate molecules properties")
-    upload_mol_props()
+    upload_mol_props(engine)
 
     logger.info("Finish.")
