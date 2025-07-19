@@ -12,9 +12,9 @@ class Base(DeclarativeBase):
 class Journal(Base):
     __tablename__ = "journals"
     name: Mapped[str] = mapped_column(unique=True)
-    short_name: Mapped[str] = mapped_column(unique=True)
-    abbreviation: Mapped[str]
-    old_name: Mapped[str] = mapped_column(unique=True)
+    short_name: Mapped[Optional[str]] = mapped_column(unique=True)
+    abbreviation: Mapped[Optional[str]]
+    old_name: Mapped[Optional[str]] = mapped_column(unique=True)
     papers: Mapped[set["Paper"]] = relationship(back_populates="journal")
 
     def __repr__(self) -> str:
@@ -26,7 +26,7 @@ class Paper(Base):
     doi: Mapped[str] = mapped_column(unique=True)
     title: Mapped[str] = mapped_column(unique=True)
     authors: Mapped[str]
-    abstract: Mapped[str]
+    abstract: Mapped[Optional[str]]
     journal_id: Mapped[int] = mapped_column(ForeignKey("journals.id"))
     journal: Mapped["Journal"] = relationship(back_populates="papers")
     year: Mapped[int]
