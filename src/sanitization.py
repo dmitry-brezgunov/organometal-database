@@ -54,10 +54,10 @@ def set_dative_bonds(mol: Chem.Mol) -> Chem.RWMol:
     rwmol.UpdatePropertyCache(strict=False)
     metals = [at for at in rwmol.GetAtoms() if is_transition_metal(at)]
     for metal in metals:
-        dative_nbr = [at for at in metal.GetNeighbors() if at.GetAtomicNum() in DATIVE_VALENCE]
+        dative_nbr: list[Chem.Atom] = [at for at in metal.GetNeighbors() if at.GetAtomicNum() in DATIVE_VALENCE]
         for nbr in dative_nbr:
             nbr_atom_num = nbr.GetAtomicNum()
-            nbr_actual_valence = nbr.GetExplicitValence()
+            nbr_actual_valence = nbr.GetValence(which=Chem.rdchem.ValenceType.EXPLICIT)
             nbr_max_valence = get_max_valence(nbr_atom_num, nbr_actual_valence)
             bond_type = rwmol.GetBondBetweenAtoms(nbr.GetIdx(), metal.GetIdx()).GetBondType()
             if nbr_actual_valence > nbr_max_valence and bond_type == Chem.BondType.SINGLE:
@@ -71,7 +71,7 @@ def set_charges_for_nbp(mol: Chem.Mol) -> Chem.Mol:
     atoms = [atom for atom in mol.GetAtoms() if atom.GetAtomicNum() in (5, 7, 15)]
     for atom in atoms:
         metals_nbr = [at for at in atom.GetNeighbors() if is_metal(at)]
-        num_bonds = atom.GetExplicitValence()
+        num_bonds = atom.GetValence(which=Chem.rdchem.ValenceType.EXPLICIT)
         atom_num = atom.GetAtomicNum()
 
         if not metals_nbr and num_bonds == NBP_CHARGES[atom_num][0]:
